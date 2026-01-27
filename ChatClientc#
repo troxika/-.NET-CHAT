@@ -1,41 +1,83 @@
 using System.Net.Sockets;
 
-namespace ChatClientC_
+string host = "127.0.0.1";
+int port = 27015;
+using TcpClient client = new TcpClient();
+Console.Write("Введите свое имя: ");
+string? userName = Console.ReadLine();
+Console.WriteLine($"Добро пожаловать, {userName}");
+StreamReader? Reader = null;
+StreamWriter? Writer = null;
+
+try
 {
-    internal class Program
-    {
-        static void Command(string server, string message)
+    client.Connect(host, port); //подключение клиента
+    Reader = new StreamReader(client.GetStream());
+    Writer = new StreamWriter(client.GetStream());
+    if (Writer is null || Reader is null) return;
+    // запускаем новый поток для получения данных
+    Task.Run(() => ReceiveMessageAsync(Reader));
+    // запускаем ввод сообщений
+    await SendMessageAsync(Writer);
+}
+catch (Exception ex)
+{
+    Console.WriteLine(ex.Message);
+}
+Writer?.Close();
+Reader?.Close();
+
+// отправка сообщений
+async Task SendMessageAsync(StreamWriter writer)
+{
+    // сначала отправляем имя
+        await writer.WriteLineAsync(userName);
+        await writer.FlushAsync();
+        Console.WriteLine("Для отправки сообщений введите сообщение и нажмите Enter");
+
+        while (true)
         {
-            try
-            {
-                int port = 27015;
-                using TcpClient tcp = new TcpClient(server, port);
-                Byte[] data = System.Text.Encoding.ASCII.GetBytes(message);
-                NetworkStream stream = tcp.GetStream();
-                stream.Write(data, 0, data.Length);
-
-                Console.WriteLine("Sent: {0}", message);
-                data = new Byte[256];
-                String responseData = String.Empty;
-                Int32 bytes = stream.Read(data, 0, data.Length);
-                responseData = System.Text.Encoding.ASCII.GetString(data, 0, bytes);
-                Console.WriteLine("Received: {0}", responseData);
-            }
-            catch (SocketException e)
-            {
-                Console.WriteLine("SocketException: {0}", e);
-            }
-
-            Console.WriteLine("\n Press Enter to continue...");
-            Console.Read();
+            string? message = Console.ReadLine();
+            await writer.WriteLineAsync(message);
+            await writer.FlushAsync();
         }
-
-
-        static void Main(string[] args)
+}
+// получение сообщений
+async Task ReceiveMessageAsync(StreamReader reader)
+{
+    while (true)
+    {
+        try
         {
-        string server = "127.0.0.1";
-            string message = "старый";
-            Command(server, message);
+            // считываем ответ в виде строки
+            string? message = await reader.ReadLineAsync();
+            // если пустой ответ, ничего не выводим на консоль
+            if (string.IsNullOrEmpty(message)) continue;
+            Print(message);//вывод сообщения
+        }
+        catch
+        {
+            break;
         }
     }
+}
+// чтобы полученное сообщение не накладывалось на ввод нового сообщения
+void Print(string message)
+{
+    if (OperatingSystem.IsWindows())    // если ОС Windows
+    {
+        var position = Console.GetCursorPosition(); // получаем текущую позицию курсора
+        int left = position.Left;   // смещение в символах относительно левого края
+        int top = position.Top;     // смещение в строках относительно верха
+        // копируем ранее введенные символы в строке на следующую строку
+        Console.MoveBufferArea(0, top, left, 1, 0, top + 1);
+        // устанавливаем курсор в начало текущей строки
+        Console.SetCursorPosition(0, top);
+        // в текущей строке выводит полученное сообщение
+        Console.WriteLine(message);
+        // переносим курсор на следующую строку
+        // и пользователь продолжает ввод уже на следующей строке
+        Console.SetCursorPosition(left, top + 1);
+    }
+    else Console.WriteLine(message);
 }
