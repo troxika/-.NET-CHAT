@@ -1,0 +1,88 @@
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
+using System.Net.Sockets;
+
+namespace WinFormsApp6
+{
+    public partial class Form1 : Form
+    {
+
+        public Form1()
+        {
+            InitializeComponent();
+            string host = "127.0.0.1";
+            int port = 27015;
+            using TcpClient client = new TcpClient();
+            Console.Write("Введите свое имя: ");
+            string? userName = Console.ReadLine();
+            Console.WriteLine($"Добро пожаловать, {userName}");
+            StreamReader? Reader = null;
+            StreamWriter? Writer = null;
+
+            try
+            {
+                client.Connect(host, port); //подключение клиента
+                Reader = new StreamReader(client.GetStream());
+                Writer = new StreamWriter(client.GetStream());
+                if (Writer is null || Reader is null) return;
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+            Writer?.Close();
+            Reader?.Close();
+        }
+
+        private void textBox1_TextChanged(object sender, EventArgs e)
+        {
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            textBox1.Text(userName);
+            await writer.FlushAsync();
+            Console.WriteLine("Для отправки сообщений введите сообщение и нажмите Enter");
+
+            while (true)
+            {
+                string? message = Console.ReadLine();
+                await writer.WriteLineAsync(message);
+                await writer.FlushAsync();
+            }
+        }
+
+        private void getbutton_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        public void Form1_Load(object sender, EventArgs e)
+        {
+            textBox1.Text = "Введите свое имя";
+            string host = "127.0.0.1";
+            int port = 27015;
+            using TcpClient client = new TcpClient();
+            string? userName = Console.ReadLine();
+            Console.WriteLine($"Добро пожаловать, {userName}");
+            StreamReader? Reader = null;
+            StreamWriter? Writer = null;
+
+            try
+            {
+                client.Connect(host, port); //подключение клиента
+                Reader = new StreamReader(client.GetStream());
+                Writer = new StreamWriter(client.GetStream());
+                if (Writer is null || Reader is null) return;
+
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
+            Writer?.Close();
+            Reader?.Close();
+        }
+    }
+    }
+
