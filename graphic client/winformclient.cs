@@ -28,14 +28,17 @@ namespace WinFormsApp6
 
         public void button1_Click(object sender, EventArgs e)
         {
-            
+            writer.WriteLineAsync(textBox2.Text);
         }
             
         async private void getbutton_Click(object sender, EventArgs e)
         {
-            writer.Write("reertirreleeenneerrtttoooorpppeqqqwweeaasdddkfkkkffaaasssdaaasd");
-            string message = await reader.ReadToEndAsync();
+            writer.Write("get()");
+            textBox1.Clear();
+            string message = reader.ReadLine();
             textBox1.Text = message;
+            writer.Close();
+            reader.Close();
         }
         //async private void ReceiveData()
         //{
@@ -99,9 +102,9 @@ namespace WinFormsApp6
                     writer.WriteLineAsync(userName);
 
                     isConnected = true;
-                    textBox1.AppendText($"Добро пожаловать, {userName}\n");
-                    textBox1.AppendText("Подключение к серверу установлено.\n");
-                    textBox1.AppendText("Для отправки сообщений введите текст и нажмите Enter или кнопку 'Отправить'.\n");
+                    textBox1.AppendText("Подключение к серверу установлено.\r\t");
+                    textBox1.AppendText("Для отправки сообщений введите текст и нажмите Enter или кнопку 'Отправить'.\r\t");
+                    textBox1.AppendText("\nВведите имя:");
 
                 }
             }
