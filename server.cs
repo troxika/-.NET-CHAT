@@ -35,24 +35,34 @@ class ServerObject
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex.Message);
+            Console.WriteLine("trrrtrr");
+            Console.WriteLine(ex.ToString());
         }
         finally
         {
             Disconnect();
         }
     }
- 
+
     // трансляция сообщения подключенным клиентам
     protected internal async Task BroadcastMessageAsync(string message, string id)
     {
-        foreach (var client in  clients)
+        try
         {
-            if (client.Id != id) // если id клиента не равно id отправителя
+            if (message == "get")
             {
-                await client.Writer.WriteLineAsync(message); //передача данных
-                await client.Writer.FlushAsync();
+                foreach (var client in clients)
+                {
+                    if (client.Id != id) // если id клиента не равно id отправителя
+                    {
+                        await client.Writer.WriteLineAsync(message); //передача данных
+                        await client.Writer.FlushAsync();
+                    }
+                }
             }
+        }
+        catch { 
+        Console.WriteLine($"Failed to send message: {message}");
         }
     }
     // отключение всех клиентов
@@ -70,7 +80,9 @@ class ClientObject
     protected internal string Id { get;} = Guid.NewGuid().ToString();
     protected internal StreamWriter Writer { get;}
     protected internal StreamReader Reader { get;}
- 
+    protected internal StreamReader fileReader { get; }
+    protected internal StreamWriter fileWriter { get; }
+
     TcpClient client;
     ServerObject server; // объект сервера
  
@@ -84,6 +96,10 @@ class ClientObject
         Reader = new StreamReader(stream);
         // создаем StreamWriter для отправки данных
         Writer = new StreamWriter(stream);
+        // создаем streamreader для чтения данных из фаила
+        fileReader = new StreamReader("chattext.txt");
+        // создаем streamWriter для записи данных в фаил
+        fileWriter = new StreamWriter("chattext.txt", true);
     }
  
     public async Task ProcessAsync()
@@ -102,10 +118,24 @@ class ClientObject
                 try
                 {
                     message = await Reader.ReadLineAsync();
-                    if (message == null) continue;
-                    message = $"{userName}: {message}";
-                    Console.WriteLine(message);
-                    await server.BroadcastMessageAsync(message, Id);
+                    if (message != null)
+                    {
+                        if (message != "reertirreleeenneerrtttoooorpppeqqqwweeaasdddkfkkkffaaasssdaaasd")
+                        {
+                            Console.WriteLine("запись");
+                            message = $"{userName}: {message}";
+                            Console.WriteLine(message);
+                            fileWriter.Write(message);
+                            fileWriter.Close();
+                        }
+                        else
+                        {
+                            Console.WriteLine("чьение");
+                            string text = fileReader.ReadToEnd();
+                            Console.WriteLine(text);
+                            fileReader.Close();
+                        }
+                    }
                 }
                 catch
                 {
@@ -126,11 +156,15 @@ class ClientObject
             server.RemoveConnection(Id);
         }
     }
+
     // закрытие подключения
     protected internal void Close()
     {
         Writer.Close();
         Reader.Close();
         client.Close();
+        fileReader.Close();
+        fileWriter.Close();
     }
+
 }
