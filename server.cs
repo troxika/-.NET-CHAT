@@ -1,42 +1,58 @@
 using System.Net;
 using System.Net.Sockets;
- 
-ServerObject server = new ServerObject();// создаем сервер
-await server.ListenAsync(); // запускаем сервер
- 
+using System.Text;
+
+// Создаем и запускаем сервер
+ServerObject server = new ServerObject();
+await server.ListenAsync();
+
 class ServerObject
 {
-    TcpListener tcpListener = new TcpListener(IPAddress.Any, 27015); // сервер для прослушивания
-    List<ClientObject> clients = new List<ClientObject>(); // все подключения
+    TcpListener tcpListener = new TcpListener(IPAddress.Any, 27015);
+    List<ClientObject> clients = new List<ClientObject>();
+
+    // Для потокобезопасной работы со списком клиентов
+    private readonly object clientsLock = new object();
+
     protected internal void RemoveConnection(string id)
     {
-        // получаем по id закрытое подключение
-        ClientObject? client = clients.FirstOrDefault(c => c.Id == id);
-        // и удаляем его из списка подключений
-        if (client != null) clients.Remove(client);
-        client?.Close();
+        lock (clientsLock)
+        {
+            ClientObject? client = clients.FirstOrDefault(c => c.Id == id);
+            if (client != null)
+            {
+                clients.Remove(client);
+                client?.Close();
+                Console.WriteLine($"Клиент {id} отключен");
+            }
+        }
     }
-    // прослушивание входящих подключений
+
+    // Прослушивание входящих подключений
     protected internal async Task ListenAsync()
     {
         try
         {
             tcpListener.Start();
             Console.WriteLine("Сервер запущен. Ожидание подключений...");
- 
+
             while (true)
             {
                 TcpClient tcpClient = await tcpListener.AcceptTcpClientAsync();
- 
+
                 ClientObject clientObject = new ClientObject(tcpClient, this);
-                clients.Add(clientObject);
-                Task.Run(clientObject.ProcessAsync);
+                lock (clientsLock)
+                {
+                    clients.Add(clientObject);
+                }
+
+                Console.WriteLine($"Новое подключение: {clientObject.Id}");
+                _ = Task.Run(() => clientObject.ProcessAsync());
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("trrrtrr");
-            Console.WriteLine(ex.ToString());
+            Console.WriteLine($"Ошибка в ListenAsync: {ex.Message}");
         }
         finally
         {
@@ -44,127 +60,234 @@ class ServerObject
         }
     }
 
-    // трансляция сообщения подключенным клиентам
+    // Трансляция сообщения подключенным клиентам
     protected internal async Task BroadcastMessageAsync(string message, string id)
     {
-        try
+        List<ClientObject> clientsCopy;
+        lock (clientsLock)
         {
-            if (message == "get")
+            clientsCopy = new List<ClientObject>(clients);
+        }
+
+        foreach (var client in clientsCopy)
+        {
+            if (client.Id != id) // если id клиента не равно id отправителя
             {
-                foreach (var client in clients)
+                try
                 {
-                    if (client.Id != id) // если id клиента не равно id отправителя
-                    {
-                        await client.Writer.WriteLineAsync(message); //передача данных
-                        await client.Writer.FlushAsync();
-                    }
+                    await client.Writer.WriteLineAsync(message);
+                    await client.Writer.FlushAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка отправки клиенту {client.Id}: {ex.Message}");
                 }
             }
         }
-        catch { 
-        Console.WriteLine($"Failed to send message: {message}");
-        }
     }
-    // отключение всех клиентов
+
+    // Отключение всех клиентов
     protected internal void Disconnect()
     {
-        foreach (var client in clients)
+        Console.WriteLine("Отключение всех клиентов...");
+
+        List<ClientObject> clientsCopy;
+        lock (clientsLock)
         {
-            client.Close(); //отключение клиента
+            clientsCopy = new List<ClientObject>(clients);
+            clients.Clear();
         }
-        tcpListener.Stop(); //остановка сервера
+
+        foreach (var client in clientsCopy)
+        {
+            try
+            {
+                client.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при отключении клиента: {ex.Message}");
+            }
+        }
+
+        tcpListener.Stop();
+        Console.WriteLine("Сервер остановлен");
     }
 }
+
 class ClientObject
 {
-    protected internal string Id { get;} = Guid.NewGuid().ToString();
-    protected internal StreamWriter Writer { get;}
-    protected internal StreamReader Reader { get;}
-    protected internal StreamReader fileReader { get; }
-    protected internal StreamWriter fileWriter { get; }
+    protected internal string Id { get; } = Guid.NewGuid().ToString();
+    protected internal StreamWriter Writer { get; }
+    protected internal StreamReader Reader { get; }
 
-    TcpClient client;
-    ServerObject server; // объект сервера
- 
+    private TcpClient client;
+    private ServerObject server;
+    private string? userName;
+    private static readonly object fileLock = new object();
+
     public ClientObject(TcpClient tcpClient, ServerObject serverObject)
     {
         client = tcpClient;
         server = serverObject;
-        // получаем NetworkStream для взаимодействия с сервером
+
         var stream = client.GetStream();
-        // создаем StreamReader для чтения данных
-        Reader = new StreamReader(stream);
-        // создаем StreamWriter для отправки данных
-        Writer = new StreamWriter(stream);
-        // создаем streamreader для чтения данных из фаила
-        fileReader = new StreamReader("chattext.txt");
-        // создаем streamWriter для записи данных в фаил
-        fileWriter = new StreamWriter("chattext.txt", true);
+        Reader = new StreamReader(stream, Encoding.UTF8);
+        Writer = new StreamWriter(stream, Encoding.UTF8)
+        {
+            AutoFlush = true
+        };
     }
- 
+
     public async Task ProcessAsync()
     {
         try
         {
-            // получаем имя пользователя
-            string? userName = await Reader.ReadLineAsync();
-            string? message = $"{userName} вошел в чат";
-            // посылаем сообщение о входе в чат всем подключенным пользователям
+            // Получаем имя пользователя
+            userName = await Reader.ReadLineAsync();
+            string message = $"{userName} вошел в чат";
+
+            // Посылаем сообщение о входе в чат всем подключенным пользователям
             await server.BroadcastMessageAsync(message, Id);
             Console.WriteLine(message);
-            // в бесконечном цикле получаем сообщения от клиента
+
+            // В бесконечном цикле получаем сообщения от клиента
             while (true)
             {
                 try
                 {
-                    message = await Reader.ReadLineAsync();
-                    if (message != null)
+                    string? clientMessage = await Reader.ReadLineAsync();
+
+                    if (clientMessage == null)
                     {
-                        if (message != "reertirreleeenneerrtttoooorpppeqqqwweeaasdddkfkkkffaaasssdaaasd")
-                        {
-                            Console.WriteLine("запись");
-                            message = $"{userName}: {message}";
-                            Console.WriteLine(message);
-                            fileWriter.Write(message);
-                            fileWriter.Close();
-                        }
-                        else
-                        {
-                            Console.WriteLine("чьение");
-                            string text = fileReader.ReadToEnd();
-                            Console.WriteLine(text);
-                            fileReader.Close();
-                        }
+                        // Клиент отключился
+                        break;
+                    }
+
+                    if (clientMessage.Trim() == "get()") // trim удаляет пробельные символы в начале и конце
+
+                    {
+                        Console.WriteLine("Чтение из файла");
+                        string text = ReadFromFile();
+                        Console.WriteLine($"Прочитано из файла: {text}");
+
+                        // Отправляем прочитанное обратно клиенту
+                        await Writer.WriteLineAsync($"История чата: {text}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Запись в файл");
+                        string formattedMessage = $"{userName}: {clientMessage}";
+                        Console.WriteLine(formattedMessage);
+
+                        WriteToFile(formattedMessage);
+
+                        // Рассылаем сообщение всем клиентам
+                        await server.BroadcastMessageAsync(formattedMessage, Id);
                     }
                 }
-                catch
+                catch (IOException)
                 {
-                    message = $"{userName} покинул чат";
-                    Console.WriteLine(message);
-                    await server.BroadcastMessageAsync(message, Id);
+                    // Ошибка чтения/записи - клиент отключился
                     break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка обработки сообщения: {ex.Message}");
+                    // Продолжаем работу
                 }
             }
         }
         catch (Exception e)
         {
-            Console.WriteLine(e.Message);
+            Console.WriteLine($"Ошибка в ProcessAsync для клиента {Id}: {e.Message}");
         }
         finally
         {
-            // в случае выхода из цикла закрываем ресурсы
+            // При выходе из цикла отправляем сообщение о выходе
+            if (!string.IsNullOrEmpty(userName))
+            {
+                string leaveMessage = $"{userName} покинул чат";
+                Console.WriteLine(leaveMessage);
+
+                try
+                {
+                    await server.BroadcastMessageAsync(leaveMessage, Id);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Не удалось отправить сообщение о выходе: {ex.Message}");
+                }
+            }
+
+            // Закрываем подключение
             server.RemoveConnection(Id);
         }
     }
 
-    // закрытие подключения
-    protected internal void Close()
+    private void WriteToFile(string message)
     {
-        Writer.Close();
-        Reader.Close();
-        client.Close();
-        fileReader.Close();
-        fileWriter.Close();
+        lock (fileLock)
+        {
+            try
+            {
+                using (var fileWriter = new StreamWriter("chattext.txt", true, Encoding.UTF8))
+                {
+                    fileWriter.WriteLine(message);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка записи в файл: {ex.Message}");
+            }
+        }
     }
 
+    private string ReadFromFile()
+    {
+        lock (fileLock)
+        {
+            try
+            {
+                if (File.Exists("chattext.txt"))
+                {
+                    using (var fileReader = new StreamReader("chattext.txt", Encoding.UTF8))
+                    {
+                        return fileReader.ReadToEnd();
+                    }
+                }
+                else
+                {
+                    return "Файл истории не найден";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка чтения файла: {ex.Message}");
+                return $"Ошибка чтения файла: {ex.Message}";
+            }
+        }
+    }
+
+    // Закрытие подключения
+    protected internal void Close()
+    {
+        try
+        {
+            Writer?.Close();
+        }
+        catch { }
+
+        try
+        {
+            Reader?.Close();
+        }
+        catch { }
+
+        try
+        {
+            client?.Close();
+        }
+        catch { }
+    }
 }
