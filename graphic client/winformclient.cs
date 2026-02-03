@@ -1,121 +1,232 @@
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
+using System;
+using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.IO;
-using System.Net.Http;
+using System.Threading;
+using System.Windows.Forms;
 
 namespace WinFormsApp6
 {
     public partial class Form1 : Form
     {
-        private TcpClient? client;
-        private StreamReader? reader;
-        private StreamWriter? writer;
-        private string? userName;
+        private TcpClient client;
+        private NetworkStream stream;
+        private Thread receiveThread;
         private bool isConnected = false;
+        private string serverIP = "127.0.0.1"; // IP-адрес сервера
+        private int port = 27015; // Порт сервера
 
-        private const string host = "127.0.0.1";
-        private const int port = 27015;
         public Form1()
         {
             InitializeComponent();
-
         }
-
-        private void textBox1_TextChanged(object sender, EventArgs e)
-        {
-        }
-
-        public void button1_Click(object sender, EventArgs e)
-        {
-            writer.WriteLineAsync(textBox2.Text);
-        }
-            
-        async private void getbutton_Click(object sender, EventArgs e)
-        {
-            writer.Write("get()");
-            textBox1.Clear();
-            string message = reader.ReadLine();
-            textBox1.Text = message;
-            writer.Close();
-            reader.Close();
-        }
-        //async private void ReceiveData()
-        //{
-        //    byte[] buffer = new byte[1024];
-
-        //    while (client?.Connected == true)
-        //    {
-        //        try
-        //        {
-        //            byte[] data = new byte[512];
-        //            var stream = client.GetStream();
-        //            if (data != null)
-        //            {
-        //                // Преобразуем байты в строку
-        //                int bytes = await stream.ReadAsync(data);
-        //                // получаем отправленное время
-        //                string receivedData = Encoding.UTF8.GetString(data, 0, bytes);
-
-        //                // Выводим в TextBox (используем Invoke для безопасности потока)
-        //                Invoke(new Action(() =>
-        //                {
-        //                    textBox1.AppendText($"Получено: {receivedData}\r\n");
-        //                    textBox1.ScrollToCaret(); // Автопрокрутка
-        //                }));
-        //            }
-        //        }
-        //        catch (Exception ex)
-        //        {
-        //            Invoke(new Action(() =>
-        //            {
-        //                textBox1.AppendText($"Ошибка приема: {ex.Message}\r\n");
-        //            }));
-        //            break;
-        //        }
-        //    }
-        //}
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            textBox1.Text = "Готов к подключению..." + Environment.NewLine;
+            UpdateConnectionStatus();
+        }
+
+        private void UpdateConnectionStatus()
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action(UpdateConnectionStatus));
+                return;
+            }
+
+            if (isConnected)
+            {
+                this.Text = "Клиент чата - Подключено";
+                button1.Enabled = true;
+                getbutton.Text = "Отключиться";
+                textBox2.Enabled = true;
+            }
+            else
+            {
+                this.Text = "Клиент чата - Не подключено";
+                button1.Enabled = false;
+                getbutton.Text = "Подключиться";
+                textBox2.Enabled = false;
+            }
+        }
+
+        private void ConnectToServer()
+        {
             try
             {
+                client = new TcpClient();
+                client.Connect(serverIP, port);
+                stream = client.GetStream();
+                isConnected = true;
 
-                if (textBox2.Text != string.Empty)
-                {
-                    MessageBox.Show("Имя не может быть пустым!", "Ошибка",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                else
-                {
-                    // Подключение к серверу
-                    client = new TcpClient();
-                    client.ConnectAsync(host, port);
+                AppendToChat("Подключено к серверу " + serverIP + ":" + port);
 
-                    var stream = client.GetStream();
-                    reader = new StreamReader(stream, Encoding.UTF8);
-                    writer = new StreamWriter(stream, Encoding.UTF8)
+                // Запускаем поток для приема сообщений
+                receiveThread = new Thread(new ThreadStart(ReceiveMessages));
+                receiveThread.IsBackground = true;
+                receiveThread.Start();
+
+                UpdateConnectionStatus();
+            }
+            catch (Exception ex)
+            {
+                AppendToChat("Ошибка подключения: " + ex.Message);
+                isConnected = false;
+                UpdateConnectionStatus();
+            }
+        }
+
+        private void DisconnectFromServer()
+        {
+            try
+            {
+                isConnected = false;
+
+                if (stream != null)
+                    stream.Close();
+
+                if (client != null)
+                    client.Close();
+
+                if (receiveThread != null && receiveThread.IsAlive)
+                    receiveThread.Abort();
+
+                AppendToChat("Отключено от сервера");
+                UpdateConnectionStatus();
+            }
+            catch (Exception ex)
+            {
+                AppendToChat("Ошибка отключения: " + ex.Message);
+            }
+        }
+
+        private void ReceiveMessages()
+        {
+            byte[] buffer = new byte[1024];
+            StringBuilder messageBuilder = new StringBuilder();
+
+            while (isConnected)
+            {
+                try
+                {
+                    if (stream.DataAvailable)
                     {
-                        AutoFlush = true
-                    };
-                    writer.WriteLineAsync(userName);
+                        int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                        if (bytesRead > 0)
+                        {
+                            string receivedData = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                            messageBuilder.Append(receivedData);
 
-                    isConnected = true;
-                    textBox1.AppendText("Подключение к серверу установлено.\r\t");
-                    textBox1.AppendText("Для отправки сообщений введите текст и нажмите Enter или кнопку 'Отправить'.\r\t");
-                    textBox1.AppendText("\nВведите имя:");
+                            // Проверяем, содержит ли сообствие символ конца строки
+                            if (receivedData.Contains("\n") || receivedData.Contains(Environment.NewLine))
+                            {
+                                string fullMessage = messageBuilder.ToString().Trim();
+                                AppendToChat("Сервер: " + fullMessage);
+                                messageBuilder.Clear();
+                            }
+                        }
+                    }
+                    Thread.Sleep(100); // Небольшая задержка для снижения нагрузки на CPU
+                }
+                catch (Exception ex)
+                {
+                    if (isConnected) // Выводим ошибку только если мы еще должны быть подключены
+                    {
+                        AppendToChat("Ошибка приема: " + ex.Message);
+                        DisconnectFromServer();
+                    }
+                    break;
+                }
+            }
+        }
 
+        private void SendMessageToServer(string message)
+        {
+            if (!isConnected || stream == null || client == null || !client.Connected)
+            {
+                AppendToChat("Не подключено к серверу");
+                return;
+            }
+
+            try
+            {
+                // Обработка специальных команд
+                if (message.Trim().ToLower() == "get()")
+                {
+                    AppendToChat("Запрашиваю историю чата...");
+                }
+                {
+                    if (stream != null && stream.CanWrite)
+                    {
+                        byte[] data = Encoding.UTF8.GetBytes(message + Environment.NewLine);
+                        stream.Write(data, 0, data.Length);
+                        stream.Flush();
+                        AppendToChat("Вы: " + message);
+                        
+                    }
                 }
             }
             catch (Exception ex)
             {
-
-
-                MessageBox.Show($"Ошибка подключения: {ex.Message}", "Ошибка",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AppendToChat("Ошибка отправки: " + ex.Message);
+                DisconnectFromServer();
             }
         }
-    }
-    }
 
+        private void AppendToChat(string message)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<string>(AppendToChat), message);
+                return;
+            }
+
+            textBox1.AppendText(message + Environment.NewLine);
+
+            // Автопрокрутка к последнему сообщению
+            textBox1.SelectionStart = textBox1.Text.Length;
+            textBox1.ScrollToCaret();
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            string message = textBox2.Text.Trim();
+            if (!string.IsNullOrEmpty(message))
+            {
+                SendMessageToServer(message);
+                textBox2.Clear();
+                textBox2.Focus();
+            }
+        }
+
+        private void getbutton_Click(object sender, EventArgs e)
+        {
+            if (isConnected)
+            {
+                DisconnectFromServer();
+            }
+            else
+            {
+                ConnectToServer();
+            }
+        }
+
+        private void textBox2_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter && !e.Shift && isConnected)
+            {
+                e.SuppressKeyPress = true;
+                button1_Click(sender, e);
+            }
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            DisconnectFromServer();
+        }
+
+        
+    }
+}
