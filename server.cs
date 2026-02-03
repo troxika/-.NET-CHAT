@@ -164,15 +164,49 @@ class ClientObject
                         break;
                     }
 
-                    if (clientMessage.Trim() == "get()") // trim удаляет пробельные символы в начале и конце
-
+                    if (clientMessage == "get()")
                     {
-                        Console.WriteLine("Чтение из файла");
-                        string text = ReadFromFile();
-                        Console.WriteLine($"Прочитано из файла: {text}");
+                        Console.WriteLine("Чтение из файла chattext.txt");
 
-                        // Отправляем прочитанное обратно клиенту
-                        await Writer.WriteLineAsync($"История чата: {text}");
+                        try
+                        {
+                            // Создаем StreamWriter для отправки данных клиенту
+                            using (StreamWriter writer = new StreamWriter(client.GetStream(), Encoding.UTF8))
+                            {
+                                writer.AutoFlush = true;
+
+                                // Проверяем существование файла
+                                if (File.Exists("chattext.txt"))
+                                {
+                                    // Отправляем сообщение о начале истории
+                                    await writer.WriteLineAsync("[SYSTEM]: Начало истории чата:");
+
+                                    // Читаем файл построчно и отправляем клиенту
+                                    using (StreamReader fileReader = new StreamReader("chattext.txt", Encoding.UTF8))
+                                    {
+                                        string line;
+                                        int lineCount = 0;
+
+                                        while ((line = await fileReader.ReadLineAsync()) != null)
+                                        {
+                                            if (!string.IsNullOrWhiteSpace(line))
+                                            {
+                                                await writer.WriteLineAsync($"[HISTORY]: {line}");
+                                                lineCount++;
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    await writer.WriteLineAsync("[SYSTEM]: Файл истории чата не найден");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Ошибка при чтении/отправке файла: {ex.Message}");
+                        }
                     }
                     else
                     {
@@ -188,13 +222,11 @@ class ClientObject
                 }
                 catch (IOException)
                 {
-                    // Ошибка чтения/записи - клиент отключился
                     break;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Ошибка обработки сообщения: {ex.Message}");
-                    // Продолжаем работу
                 }
             }
         }
@@ -242,34 +274,6 @@ class ClientObject
             }
         }
     }
-
-    private string ReadFromFile()
-    {
-        lock (fileLock)
-        {
-            try
-            {
-                if (File.Exists("chattext.txt"))
-                {
-                    using (var fileReader = new StreamReader("chattext.txt", Encoding.UTF8))
-                    {
-                        return fileReader.ReadToEnd();
-                    }
-                }
-                else
-                {
-                    return "Файл истории не найден";
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Ошибка чтения файла: {ex.Message}");
-                return $"Ошибка чтения файла: {ex.Message}";
-            }
-        }
-    }
-
-    // Закрытие подключения
     protected internal void Close()
     {
         try
